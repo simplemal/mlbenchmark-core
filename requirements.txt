@@ -1,0 +1,18 @@
+# mlbenchmark-core — dipendenze installabili via pip
+# (llama-cpp-python e mlc-llm sono gestiti separatamente da setup.sh)
+
+# MLX — Apple Silicon GPU inference
+mlx==0.31.1
+mlx-lm==0.31.1
+
+# Hugging Face
+huggingface_hub==1.7.2
+transformers==5.3.0
+tokenizers==0.22.2
+sentencepiece==0.2.1
+protobuf==7.34.1
+
+# Utility
+numpy==2.4.3
+psutil==7.2.2
+requests==2.32.5

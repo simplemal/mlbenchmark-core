@@ -61,6 +61,36 @@ pip install --quiet --pre -U \
     mlc-ai-nightly-cpu \
     -f https://mlc.ai/wheels
 
+# ── Hugging Face token ────────────────────────────────────────────────────
+# Necessario per scaricare i modelli (alcuni sono gated su HF).
+# Ottieni il tuo token su https://huggingface.co/settings/tokens
+echo ""
+echo "────────────────────────────────────────"
+echo "Hugging Face token"
+echo ""
+echo "I modelli vengono scaricati da Hugging Face."
+echo "Alcuni sono gated e richiedono un account HF con accesso approvato."
+echo "Ottieni il tuo token su: https://huggingface.co/settings/tokens"
+echo ""
+
+if command -v huggingface-cli &>/dev/null; then
+    # Controlla se c'è già un token salvato
+    EXISTING_TOKEN=$(huggingface-cli whoami 2>/dev/null | head -1 || true)
+    if [[ -n "$EXISTING_TOKEN" && "$EXISTING_TOKEN" != *"Not logged in"* ]]; then
+        echo "✓  Già loggato come: $EXISTING_TOKEN"
+        read -rp "   Vuoi aggiornare il token? [y/N] " UPDATE_TOKEN
+        if [[ "$UPDATE_TOKEN" =~ ^[Yy]$ ]]; then
+            huggingface-cli login
+        fi
+    else
+        echo "Inserisci il tuo HF token (verrà salvato in ~/.cache/huggingface/):"
+        huggingface-cli login
+    fi
+else
+    echo "⚠  huggingface-cli non trovato nel PATH — salto il login."
+    echo "   Esegui manualmente: huggingface-cli login"
+fi
+
 echo ""
 echo "════════════════════════════════════════"
 echo "✓  Setup completato."

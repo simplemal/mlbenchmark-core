@@ -442,6 +442,21 @@ def cmd_run(selected_tier_names: list[str]):
                 gs.current_tps = 0.0
                 gs.current_task = f"{tier_name} — {fmt}"
 
+                # MLC JIT pre-check — skip download entirely if incompatible
+                if fmt == "MLC":
+                    _mlc = get_runner("MLC")
+                    _jit_err = getattr(_mlc, "MLC_JIT_ERROR", None)
+                    if _jit_err:
+                        import shutil
+                        _model_dir = get_models_dir() / key
+                        if _model_dir.exists():
+                            shutil.rmtree(str(_model_dir), ignore_errors=True)
+                            print(f"[MLC] Model deleted (JIT incompatible): {_model_dir}")
+                        run_data[tier_name][fmt] = {"tps": 0.0, "success": False}
+                        emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
+                              "tps": 0.0, "success": False, "error": _jit_err})
+                        continue
+
                 # Download if needed
                 if not is_model_ready(key):
                     emit({"event": "download_start", "tier": tier_name, "backend": fmt,

@@ -157,6 +157,7 @@ def cmd_jit(args):
         fail(f"BlockBuilder AttributeError → {e}")
         fail("Questo è il bug che causa il crash JIT su macOS 26!")
         info("Il tvm installato nel venv non è compatibile con darwin25.x")
+        info("Dettagli e aggiornamenti: https://mlbenchmark.app/docs#W001")
         return
     except Exception as e:
         fail(f"TVM error: {type(e).__name__}: {e}")
@@ -238,6 +239,13 @@ def cmd_test(args):
         elif backend == "mlc":
             import model_runner_mlc as runner
             repo = str(p.resolve())
+            # Controlla compatibilità JIT prima di procedere
+            if getattr(runner, "MLC_JIT_ERROR", None):
+                fail(f"MLC non compatibile su questo Mac")
+                info(f"  {runner.MLC_JIT_ERROR}")
+                warn("Il backend MLC viene saltato su questa configurazione.")
+                info("Per dettagli: https://mlbenchmark.app/docs#W001")
+                return
         else:
             fail(f"Backend sconosciuto: {backend}")
             return

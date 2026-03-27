@@ -15,6 +15,29 @@ except ImportError:
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# ── JIT compatibility check ────────────────────────────────────────────────────
+# On some Apple Silicon + macOS 26 configurations (notably M1/M1 Pro/M1 Max/M1 Ultra)
+# the TVM nightly wheel fails at BlockBuilder instantiation with an AttributeError.
+# We detect this at import time so callers can skip MLC gracefully without a crash.
+MLC_JIT_ERROR: str | None = None
+
+
+def _check_mlc_jit():
+    global MLC_JIT_ERROR
+    if not MLC_AVAILABLE:
+        return
+    try:
+        from tvm.relax.block_builder import BlockBuilder
+        BlockBuilder()
+    except AttributeError as e:
+        MLC_JIT_ERROR = f"mlc_jit_incompatible: {e}"
+    except Exception as e:
+        MLC_JIT_ERROR = f"mlc_jit_error: {type(e).__name__}: {e}"
+
+
+_check_mlc_jit()
+# ──────────────────────────────────────────────────────────────────────────────
+
 _model = None
 _repo = None
 
@@ -26,6 +49,8 @@ def load_model_if_needed(repo: str):
     """Carica il modello se necessario"""
     if not MLC_AVAILABLE:
         raise RuntimeError("mlc_llm is not installed on this system. MLC backend unavailable.")
+    if MLC_JIT_ERROR:
+        raise RuntimeError(MLC_JIT_ERROR)
     global _model, _repo
     if _model is not None and repo == _repo:
         print(f"[MLC] Model already loaded from: {repo}")

@@ -244,6 +244,19 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
     ctx_max = min(model.get("ctx_max", 4096), 8192)
     model_dir = get_models_dir() / key
 
+    # ── MLC JIT compatibility check ───────────────────────────────────────────
+    if fmt == "MLC":
+        jit_err = getattr(runner, "MLC_JIT_ERROR", None)
+        if jit_err:
+            import shutil
+            if model_dir.exists():
+                shutil.rmtree(str(model_dir), ignore_errors=True)
+                print(f"[MLC] Model deleted (JIT incompatible): {model_dir}")
+            emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
+                  "tps": 0.0, "success": False, "error": jit_err})
+            return 0.0, False, {}
+    # ─────────────────────────────────────────────────────────────────────────
+
     try:
         if fmt == "MLX":
             repo = str(model_dir)

@@ -52,14 +52,15 @@ CMAKE_ARGS="-DGGML_METAL=on" \
     pip install --quiet "llama-cpp-python==0.3.17" \
     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/metal
 
-# ── mlc-llm + tvm da mlc.ai (nightly, Apple Silicon) ──────────────────────
-echo "▶ Installo mlc-llm (nightly, Metal)…"
-# Il pacchetto nightly include sia TVM che il runtime Metal per Apple Silicon.
-# Se il comando fallisce, visita https://mlc.ai/package/ per la versione aggiornata.
-pip install --quiet --pre -U \
-    mlc-llm-nightly-cpu \
-    mlc-ai-nightly-cpu \
-    -f https://mlc.ai/wheels
+# ── mlc-llm + tvm — pinned wheels from mlbenchmark.app ────────────────────
+echo "▶ Installo mlc-llm (pinned wheels, Metal)…"
+# Le nightly ufficiali da mlc.ai cambiano frequentemente e spesso rompono
+# la compatibilità (es. BlockBuilder._func_stack mancante con LLVM 19).
+# Usiamo wheel testate hostate su mlbenchmark.app per garantire stabilità.
+WHEELS_BASE="https://mlbenchmark.app/api/v1/wheels"
+pip install --quiet \
+    "${WHEELS_BASE}/mlc_ai_nightly_cpu-0.24.dev0-py3-none-macosx_13_0_arm64.whl" \
+    "${WHEELS_BASE}/mlc_llm_nightly_cpu-0.20.dev147-py3-none-macosx_13_0_arm64.whl"
 
 # ── Hugging Face token ────────────────────────────────────────────────────
 # Necessario per scaricare i modelli (alcuni sono gated su HF).
@@ -97,5 +98,5 @@ echo "✓  Setup completato."
 echo ""
 echo "Attiva il venv:   source .venv/bin/activate"
 echo "Verifica:         python3 cli.py info"
-echo "Test MLC:         python3 cli.py jit nano"
+echo "Test MLC:         python3 cli.py jit light"
 echo ""

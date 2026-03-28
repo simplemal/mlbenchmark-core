@@ -14,7 +14,10 @@ import json
 
 from datetime import datetime
 
+import tkinter as tk
+import tkinter.font as tkFont
 
+from tkinter import messagebox, filedialog
 from pathlib import Path
 from subprocess import Popen, PIPE
 
@@ -111,6 +114,19 @@ def is_dark_mode():
 
 
 DARK = is_dark_mode()
+
+
+def monitor_theme(widget, callback, interval=1500):
+    """Call `callback()` if dark mode changed. Uses `widget.after()` every `interval` ms."""
+    global DARK
+    current = is_dark_mode()
+    if current != DARK:
+        DARK = current
+        callback()
+    widget.after(
+        interval,
+        lambda: monitor_theme(widget, callback, interval),
+    )
 
 
 def get_prompt_warm_up():
@@ -243,6 +259,28 @@ def get_color(key):
     return UI["colors"]["dark" if is_dark_mode() else "light"].get(key, "")
 
 
+def get_font_name():
+    global CONFIG
+    for name in CONFIG.get("UI", {}).get("font", []):
+        try:
+            tkFont.Font(family=name)
+            return name
+        except tk.TclError:
+            continue
+    return "TkDefaultFont"  # fallback di sicurezza
+
+
+def get_font(size=12, style="normal"):
+    family = get_font_name()
+    style = style.lower()
+
+    # Costruzione della tupla: ("FontName", size, "bold"), ecc.
+    if style in ("bold", "italic"):
+        return (family, size, style)
+    else:
+        return (family, size)
+
+
 def get_card_dimension(dimension: str):
     global CONFIG
     CARD_DIMENSION = CONFIG.get("UI").get("results_card")
@@ -327,37 +365,32 @@ def get_current_ram_usage_gb() -> float:
 # Benchmark tier definitions and RAM-based tier selection
 # ---------------------------------------------------------------------------
 
-BENCHMARK_TIERS = [
-    {"name": "Nano",     "label": "Nano",     "model_size": "3B",  "min_ram_gb": 4.0},
-    {"name": "Entry",    "label": "Entry",    "model_size": "3B",  "min_ram_gb": 6.0},
-    {"name": "Standard", "label": "Standard", "model_size": "9B",  "min_ram_gb": 14.0},
-    {"name": "Advanced", "label": "Advanced", "model_size": "14B", "min_ram_gb": 22.0},
-    {"name": "Extreme",  "label": "Extreme",  "model_size": "32B", "min_ram_gb": 50.0},
-]
+def _load_tiers_from_config() -> list:
+    cfg = load_config()
+    return [
+        {
+            "name": t["id"],
+            "label": t["display"],
+            "model_size": t["model_size"],
+            "min_ram_gb": t["min_ram_gb"],
+            "disk_gb": t["disk_gb"],
+            "icon": t["icon"],
+        }
+        for t in cfg.get("TIERS", [])
+    ]
+
+
+BENCHMARK_TIERS = _load_tiers_from_config()
 
 # Fraction of total RAM assumed free at OS idle — used to compute potential tiers
 _OS_IDLE_FRACTION = 0.85
 
-# Safety buffer fraction added on top of min_ram_gb for tier availability display.
-# Larger models cause proportionally larger memory spikes, so a percentage scales
-# better than a fixed value. A 1 GB floor protects small tiers from macOS overhead.
-_RAM_SAFETY_BUFFER_FRACTION = 0.12
-_RAM_SAFETY_BUFFER_MIN_GB   = 1.0
-
-
-def _ram_safety_buffer(min_ram_gb: float) -> float:
-    """Return the safety buffer for a given tier minimum (12%, floor 1 GB)."""
-    return max(_RAM_SAFETY_BUFFER_MIN_GB, min_ram_gb * _RAM_SAFETY_BUFFER_FRACTION)
-
 
 def get_available_tiers(available_gb: float = None) -> list:
-    """Return tiers safely runnable with the current available RAM.
-    Uses min_ram_gb + safety buffer so that tiers shown as available
-    have enough headroom to survive normal RAM fluctuations during a run."""
+    """Return tiers safely runnable with the current available RAM."""
     if available_gb is None:
         available_gb = get_available_ram_gb()
-    return [t for t in BENCHMARK_TIERS
-            if available_gb >= t["min_ram_gb"] + _ram_safety_buffer(t["min_ram_gb"])]
+    return [t for t in BENCHMARK_TIERS if available_gb >= t["min_ram_gb"]]
 
 
 def get_potential_tiers(total_gb: float = None) -> list:

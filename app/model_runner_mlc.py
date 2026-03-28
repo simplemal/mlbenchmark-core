@@ -28,7 +28,10 @@ def _check_mlc_jit():
         return
     try:
         from tvm.relax.block_builder import BlockBuilder
-        BlockBuilder()
+        bb = BlockBuilder()
+        # _func_stack è l'attributo che manca su M1+macOS 26 con LLVM 19:
+        # il costruttore riesce ma l'accesso successivo fallisce
+        _ = bb._func_stack
     except AttributeError as e:
         MLC_JIT_ERROR = f"mlc_jit_incompatible: {e}"
     except Exception as e:

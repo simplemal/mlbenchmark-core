@@ -117,6 +117,13 @@
       "text_translation"
     ]
   },
+  "TIERS": [
+    {"id": "Light",  "display": "Light",  "icon": "leaf.fill",  "min_ram_gb": 2,  "disk_gb": 2,  "model_size": "1B"},
+    {"id": "Speed", "display": "Speed", "icon": "hare.fill",  "min_ram_gb": 5,  "disk_gb": 7,  "model_size": "3.8B"},
+    {"id": "Flash",  "display": "Flash",  "icon": "bolt.fill",  "min_ram_gb": 12, "disk_gb": 16, "model_size": "9B"},
+    {"id": "Blaze",  "display": "Blaze",  "icon": "flame.fill", "min_ram_gb": 20, "disk_gb": 26, "model_size": "14B"},
+    {"id": "Ultra",  "display": "Ultra",  "icon": "scope",      "min_ram_gb": 38, "disk_gb": 71, "model_size": "32B"}
+  ],
   "SCORE_WEIGHT": {
     "truncated": 1,
     "truncated_and_degenerate": 0.5

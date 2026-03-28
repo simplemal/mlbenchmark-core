@@ -85,7 +85,6 @@ from utils import (
     get_prompt_warm_up,
     is_model_ready,
     BENCHMARK_TIERS,
-    start_ram_monitor,
 )
 from download_model import download_model, cleanup_partial_downloads
 from benchmark_analyzer import BenchmarkAnalyzer
@@ -114,6 +113,27 @@ def get_runner(fmt: str):
     else:
         raise ValueError(f"Unknown format: {fmt}")
     return r
+
+
+_MEMORY_ERROR_KEYWORDS = (
+    "memory", "malloc", "unable to allocate", "out of memory",
+    "allocation failed", "cannot allocate", "enomem",
+)
+
+
+def _is_memory_error(exc: Exception) -> bool:
+    """Return True if the exception looks like an out-of-memory condition."""
+    if isinstance(exc, MemoryError):
+        return True
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _MEMORY_ERROR_KEYWORDS)
+
+
+def _error_tag(exc: Exception) -> str:
+    """Return a prefixed error string: 'memory_insufficient: …' or 'TypeName: …'."""
+    if _is_memory_error(exc):
+        return f"memory_insufficient: {exc}"
+    return f"{type(exc).__name__}: {exc}"
 
 
 def release_memory():
@@ -238,7 +258,7 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
         runner = get_runner(fmt)
     except Exception as e:
         emit({"event": "backend_done", "tier": tier_name, "backend": fmt, "tps": 0.0, "success": False,
-              "error": f"{type(e).__name__}: {e}"})
+              "error": _error_tag(e)})
         return 0.0, False, {}
 
     ctx_max = min(model.get("ctx_max", 4096), 8192)
@@ -284,11 +304,25 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
         print(f"[{fmt}] Warm-up traceback:\n{traceback.format_exc()}")
         _log_ram(f"{fmt} after warm-up failure")
         emit({"event": "backend_done", "tier": tier_name, "backend": fmt, "tps": 0.0, "success": False,
-              "error": f"{type(e).__name__}: {e}"})
+              "error": _error_tag(e)})
         return 0.0, False, {}
 
     if gs.cancel_requested or gs.ram_tier_drop:
         print(f"[{fmt}] Stopped after warm-up (cancel={gs.cancel_requested}, ram_drop={gs.ram_tier_drop})")
+        return 0.0, False, {}
+
+    # Post-warmup RAM check: if RAM is critically low, the model loaded but
+    # there's not enough headroom for inference — skip to avoid native crashes.
+    post_warmup_ram = get_available_ram_gb()
+    if post_warmup_ram < 0.5:
+        print(f"[{fmt}] RAM critically low after warm-up ({post_warmup_ram:.1f} GB) — skipping prompts to avoid crash")
+        _log_ram(f"{fmt} skipped (critically low RAM)")
+        try:
+            runner.release_model()
+        except Exception:
+            pass
+        emit({"event": "backend_done", "tier": tier_name, "backend": fmt, "tps": 0.0, "success": False,
+              "error": f"memory_insufficient: only {post_warmup_ram:.1f} GB RAM free after loading model"})
         return 0.0, False, {}
 
     prompts = get_prompts("basic")
@@ -338,6 +372,10 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
             elif finish_reason == "timeout":
                 print(f"[{fmt}] prompt {idx+1}/{total} '{prompt_key}': TIMEOUT after {elapsed:.1f}s")
                 _log_ram(f"{fmt} after timeout on '{prompt_key}'")
+                # First prompt timeout = backend can't run properly, abort early
+                if idx == 0:
+                    print(f"[{fmt}] First prompt timed out — skipping remaining prompts")
+                    break
             elif finish_reason == "error":
                 print(f"[{fmt}] prompt {idx+1}/{total} '{prompt_key}': ERROR returned by runner "
                       f"(real_tokens={real_tokens}, elapsed={elapsed:.2f}s)")
@@ -357,249 +395,221 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
     print(f"[{fmt}] backend finished: {len(speeds)}/{total} prompts succeeded, "
           f"avg_tps={avg_tps}, success={success}")
     _log_ram(f"{fmt} after backend completed")
-    emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
-          "tps": avg_tps, "success": success})
     return avg_tps, success, prompt_details
 
 
 # ── Run mode ──────────────────────────────────────────────────────────────────
 
-def cmd_run(selected_tier_names: list[str]):
+def _migrate_model_dirs():
+    """Rename legacy tier folders (Nano→Light, Entry→Speed, etc.) so existing
+    downloads are found under the new names. Runs once, harmless if already done."""
+    renames = {"Nano": "Light", "Entry": "Speed", "Standard": "Flash",
+               "Advanced": "Blaze", "Extreme": "Ultra"}
+    base = get_models_dir()
+    if not base.exists():
+        return
+    for old_prefix, new_prefix in renames.items():
+        for d in base.iterdir():
+            if d.is_dir() and d.name.startswith(old_prefix + "__"):
+                new_name = new_prefix + "__" + d.name.split("__", 1)[1]
+                new_path = base / new_name
+                if not new_path.exists():
+                    d.rename(new_path)
+                    print(f"[MIGRATE] {d.name} → {new_name}")
+
+
+def cmd_run_backend(tier_name: str, backend: str):
+    """Run a single backend for a single tier. One process per backend — if it
+    crashes, the frontend can launch the next one independently."""
+    _migrate_model_dirs()
     gs.cancel_requested = False
     gs.ram_tier_drop = False
 
-    if selected_tier_names:
-        # User explicitly selected these tiers — build plan directly without
-        # an upfront RAM filter. Right after Apple Intelligence the Foundation
-        # Models API may still hold memory, causing psutil to under-report
-        # available RAM and producing a false "no tiers" error.
-        # The per-tier RAM check below (before each tier runs) handles any
-        # genuine shortage at runtime.
-        plan = []
-        for name in selected_tier_names:
-            tier_def = next((t for t in BENCHMARK_TIERS if t["name"] == name), None)
-            if tier_def is None:
-                continue
-            models = get_models_for_tier(tier_def["name"])
-            if models:
-                plan.append({"tier": tier_def, "models": models})
-    else:
-        plan = get_benchmark_plan()
-
-    if not plan:
-        emit({"event": "error", "message": "No tiers available with current RAM."})
+    tier_def = next((t for t in BENCHMARK_TIERS if t["name"] == tier_name), None)
+    if tier_def is None:
+        emit({"event": "error", "message": f"Unknown tier: {tier_name}"})
         return
 
-    start_ram_monitor()
+    models = get_models_for_tier(tier_name)
+    key = None
+    model = None
+    for k, m in models.items():
+        if m["format"] == backend:
+            key, model = k, m
+            break
 
-    backend_order = ["MLX", "GGUF", "MLC"]
-    run_data = {}
-    benchmark_start = time.time()
-
-    try:
-        for plan_item in plan:
-            if gs.cancel_requested:
-                break
-
-            tier = plan_item["tier"]
-            tier_name = tier["name"]
-            models = plan_item["models"]
-
-            # Pre-tier RAM check
-            available_ram = get_available_ram_gb()
-            if available_ram < tier["min_ram_gb"]:
-                print(f"[RAM] Skipping {tier_name}: {available_ram:.1f} GB < {tier['min_ram_gb']} GB")
-                break
-
-            gs.current_tier = tier_name
-            run_data[tier_name] = {}
-
-            # Get a representative model name for this tier
-            model_name = next(iter(models.values()), {}).get("name", tier_name)
-            emit({"event": "tier_start", "tier": tier_name, "model": model_name})
-
-            sorted_models = sorted(
-                models.items(),
-                key=lambda kv: backend_order.index(kv[1]["format"])
-                if kv[1]["format"] in backend_order else 99,
-            )
-
-            for key, model in sorted_models:
-                if gs.cancel_requested or gs.ram_tier_drop:
-                    break
-
-                fmt = model["format"]
-
-                # Per-backend RAM check
-                available_ram = get_available_ram_gb()
-                if available_ram < tier["min_ram_gb"]:
-                    print(f"[RAM] Skipping {fmt}: {available_ram:.1f} GB available")
-                    run_data[tier_name][fmt] = {"tps": 0.0, "success": False}
-                    emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
-                          "tps": 0.0, "success": False})
-                    continue
-
-                gs.current_tps = 0.0
-                gs.current_task = f"{tier_name} — {fmt}"
-
-                # MLC JIT pre-check — skip download entirely if incompatible
-                if fmt == "MLC":
-                    _mlc = get_runner("MLC")
-                    _jit_err = getattr(_mlc, "MLC_JIT_ERROR", None)
-                    if _jit_err:
-                        import shutil
-                        _model_dir = get_models_dir() / key
-                        if _model_dir.exists():
-                            shutil.rmtree(str(_model_dir), ignore_errors=True)
-                            print(f"[MLC] Model deleted (JIT incompatible): {_model_dir}")
-                        run_data[tier_name][fmt] = {"tps": 0.0, "success": False}
-                        emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
-                              "tps": 0.0, "success": False, "error": _jit_err})
-                        continue
-
-                # Download if needed
-                if not is_model_ready(key):
-                    emit({"event": "download_start", "tier": tier_name, "backend": fmt,
-                          "key": key, "size_gb": model.get("size_gb", 0)})
-
-                    def dl_progress(downloaded_bytes, total_bytes, _key=key):
-                        emit({
-                            "event": "download_progress",
-                            "key": _key,
-                            "downloaded_gb": round(downloaded_bytes / (1024**3), 2),
-                            "total_gb": round(total_bytes / (1024**3), 2) if total_bytes > 0 else model.get("size_gb", 0),
-                        })
-
-                    gs.cancel_requested = False
-                    dl_result = download_model(key, dl_progress)
-
-                    if gs.cancel_requested:
-                        cleanup_partial_downloads([key])
-                        break
-
-                    if not dl_result["success"]:
-                        print(f"[{fmt}] Download failed: {dl_result['message']}")
-                        emit({"event": "download_failed", "key": key, "message": dl_result["message"]})
-                        run_data[tier_name][fmt] = {"tps": 0.0, "success": False}
-                        emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
-                              "tps": 0.0, "success": False})
-                        continue
-
-                    emit({"event": "download_done", "key": key})
-
-                if gs.cancel_requested or gs.ram_tier_drop:
-                    break
-
-                emit({"event": "backend_start", "tier": tier_name, "backend": fmt})
-                avg_tps, success, prompt_details = _run_backend(tier_name, key, model)
-                run_data[tier_name][fmt] = {"tps": avg_tps, "success": success, "prompts": prompt_details}
-
-                release_memory()
-
-                # Disk space management between models
-                next_not_ready = [
-                    k2 for item2 in plan
-                    for k2 in item2["models"].keys()
-                    if not is_model_ready(k2) and k2 != key
-                ]
-                if next_not_ready:
-                    next_key = next_not_ready[0]
-                    next_needed_gb = get_models().get(next_key, {}).get("size_gb", 0)
-                    free_gb = get_free_disk_space_gb()
-                    if free_gb < next_needed_gb:
-                        model_size_gb = get_folder_size(get_models_dir() / key) / (1024**3)
-                        # Emit a disk_space event — Xcode UI decides whether to delete
-                        emit({
-                            "event": "disk_space_low",
-                            "free_gb": round(free_gb, 1),
-                            "needed_gb": round(next_needed_gb, 1),
-                            "current_key": key,
-                            "current_size_gb": round(model_size_gb, 1),
-                        })
-                        # Wait for response on stdin: "delete" or "skip"
-                        response = _read_stdin_response(timeout=120)
-                        if gs.cancel_requested:
-                            break
-                        if response == "delete":
-                            from download_model import delete_model
-                            delete_model(key, lambda: None)
-                        else:
-                            gs.cancel_requested = True
-                            break
-
-            emit({"event": "tier_done", "tier": tier_name})
-
-            if gs.ram_tier_drop:
-                available = get_available_ram_gb()
-                print(f"[RAM] Dropped during {tier_name} — {available:.1f} GB available. Stopping.")
-                emit({
-                    "event": "ram_drop",
-                    "tier": tier_name,
-                    "available_gb": round(available, 1),
-                })
-                gs.ram_tier_drop = False
-                gs.cancel_requested = False
-                break
-
-    except Exception as e:
-        emit({"event": "error", "message": str(e)})
+    if not key:
+        emit({"event": "error", "message": f"No {backend} model found for {tier_name}"})
         return
+
+    fmt = backend
+    gs.current_tier = tier_name
+
+    # Pre-run RAM check
+    available_ram = get_available_ram_gb()
+    if available_ram < tier_def["min_ram_gb"]:
+        emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
+              "tps": 0.0, "success": False,
+              "error": f"memory_insufficient: {available_ram:.1f} GB free, need {tier_def['min_ram_gb']} GB"})
+        return
+
+    # MLC JIT pre-check
+    if fmt == "MLC":
+        _mlc = get_runner("MLC")
+        _jit_err = getattr(_mlc, "MLC_JIT_ERROR", None)
+        if _jit_err:
+            import shutil
+            _model_dir = get_models_dir() / key
+            if _model_dir.exists():
+                shutil.rmtree(str(_model_dir), ignore_errors=True)
+            emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
+                  "tps": 0.0, "success": False, "error": f"mlc_jit_incompatible: {_jit_err}"})
+            return
+
+    model_name = model.get("name", tier_name)
+    emit({"event": "tier_start", "tier": tier_name, "model": model_name})
+
+    # Download if needed
+    if not is_model_ready(key):
+        emit({"event": "download_start", "tier": tier_name, "backend": fmt,
+              "key": key, "size_gb": model.get("size_gb", 0)})
+
+        def dl_progress(downloaded_bytes, total_bytes, _key=key):
+            emit({
+                "event": "download_progress",
+                "key": _key,
+                "downloaded_gb": round(downloaded_bytes / (1024**3), 2),
+                "total_gb": round(total_bytes / (1024**3), 2) if total_bytes > 0 else model.get("size_gb", 0),
+            })
+
+        dl_result = download_model(key, dl_progress)
+
+        if gs.cancel_requested:
+            cleanup_partial_downloads([key])
+            emit({"event": "cancelled"})
+            return
+
+        if not dl_result["success"]:
+            emit({"event": "download_failed", "key": key, "message": dl_result["message"]})
+            emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
+                  "tps": 0.0, "success": False})
+            return
+
+        emit({"event": "download_done", "key": key})
+
+    if gs.cancel_requested:
+        emit({"event": "cancelled"})
+        return
+
+    # Run
+    emit({"event": "backend_start", "tier": tier_name, "backend": fmt})
+    avg_tps, success, prompt_details = _run_backend(tier_name, key, model)
+
+    release_memory()
+
+    # Emit result
+    emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
+          "tps": avg_tps, "success": success})
 
     if gs.cancel_requested:
         if gs.cancel_delete_downloads:
             import shutil
-            for item in plan:
-                for key in item["models"]:
-                    model_dir = get_models_dir() / key
-                    if model_dir.exists():
-                        try:
-                            shutil.rmtree(model_dir)
-                        except Exception as e:
-                            print(f"[cancel] Could not delete {key}: {e}")
+            model_dir = get_models_dir() / key
+            if model_dir.exists():
+                try:
+                    shutil.rmtree(model_dir)
+                except Exception:
+                    pass
         emit({"event": "cancelled"})
         return
 
-    # Save results
-    try:
-        tier_results = BenchmarkAnalyzer.compute_tier_results(run_data)
-        if not tier_results:
-            emit({"event": "error", "message": "No successful benchmark runs completed."})
-            return
-        benchmark_duration = round(time.time() - benchmark_start, 1)
-        # Build prompt_results: tier → backend → prompt_name → detail
-        prompt_results: dict = {}
-        for t_name, backends in run_data.items():
-            prompt_results[t_name] = {}
-            for bk, bk_data in backends.items():
-                if bk_data.get("success") and bk_data.get("tps", 0) > 0:
-                    prompt_results[t_name][bk] = bk_data.get("prompts", {})
-        file_path, benchmark_id = BenchmarkAnalyzer.save_result(tier_results, prompt_results, benchmark_duration)
-        emit({
-            "event": "complete",
-            "file_path": str(file_path),
-            "tier_results": tier_results,
-            "prompt_results": prompt_results,
-            "benchmark_id": benchmark_id,
-        })
-    except Exception as e:
-        emit({"event": "error", "message": f"Failed to save results: {e}"})
+    # Emit complete with this single backend's data
+    emit({
+        "event": "backend_complete",
+        "tier": tier_name,
+        "backend": fmt,
+        "tps": avg_tps,
+        "success": success,
+        "prompts": prompt_details,
+    })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
+def cmd_jit_check():
+    """Emits {"event":"jit_check","mlc_compatible":bool,"error":str|null} and exits."""
+    from model_runner_mlc import MLC_JIT_ERROR, MLC_AVAILABLE
+    compatible = MLC_AVAILABLE and MLC_JIT_ERROR is None
+    emit({
+        "event": "jit_check",
+        "mlc_compatible": compatible,
+        "error": MLC_JIT_ERROR if MLC_JIT_ERROR else (None if MLC_AVAILABLE else "MLC not installed"),
+    })
+
+
+def cmd_save(file_path=None):
+    """Read aggregated results JSON from file (or stdin as fallback) and save to CSV."""
+    if file_path:
+        with open(file_path, "r") as f:
+            raw = f.read()
+    else:
+        import sys
+        raw = sys.stdin.read()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        emit({"event": "error", "message": f"Invalid JSON: {e}"})
+        return
+
+    run_data = data.get("run_data", {})
+    duration = data.get("duration", 0)
+
+    tier_results = BenchmarkAnalyzer.compute_tier_results(run_data)
+    if not tier_results:
+        emit({"event": "error", "message": "No successful benchmark runs completed."})
+        return
+
+    prompt_results = {}
+    for t_name, backends in run_data.items():
+        prompt_results[t_name] = {}
+        for bk, bk_data in backends.items():
+            if bk_data.get("success") and bk_data.get("tps", 0) > 0:
+                prompt_results[t_name][bk] = bk_data.get("prompts", {})
+
+    file_path, benchmark_id = BenchmarkAnalyzer.save_result(tier_results, prompt_results, duration)
+    emit({
+        "event": "complete",
+        "file_path": str(file_path),
+        "tier_results": tier_results,
+        "prompt_results": prompt_results,
+        "benchmark_id": benchmark_id,
+        "duration_seconds": round(duration),
+    })
+
 
 def main():
     parser = argparse.ArgumentParser(description="MLBenchmark subprocess runner")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--info", action="store_true",
                       help="Emit hardware info and available tiers, then exit")
-    mode.add_argument("--tiers", nargs="*", metavar="TIER",
-                      help="Run benchmark for the given tier names (all available if empty)")
+    mode.add_argument("--run", nargs=2, metavar=("TIER", "BACKEND"),
+                      help="Run a single backend for a single tier (e.g. --run Light MLX)")
+    mode.add_argument("--save", nargs="?", const=True, default=None,
+                      metavar="FILE",
+                      help="Save results from JSON file (or stdin if no file given)")
+    mode.add_argument("--jit-check", action="store_true",
+                      help="Check MLC JIT compatibility and exit")
     args = parser.parse_args()
 
     if args.info:
         cmd_info()
-    else:
-        cmd_run(args.tiers or [])
+    elif args.jit_check:
+        cmd_jit_check()
+    elif args.run:
+        cmd_run_backend(args.run[0], args.run[1])
+    elif args.save is not None:
+        file_path = args.save if isinstance(args.save, str) else None
+        cmd_save(file_path)
 
 
 if __name__ == "__main__":

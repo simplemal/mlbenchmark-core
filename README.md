@@ -26,8 +26,10 @@ chmod +x setup.sh && ./setup.sh
 
 The script will:
 1. Create a `.venv` with Python 3.12
-2. Install MLX, llama-cpp-python (Metal), and mlc-llm (nightly)
+2. Install MLX, llama-cpp-python (Metal), and mlc-llm
 3. Ask for your Hugging Face token — needed to download models
+
+**Note on MLC wheels:** The official `mlc.ai/wheels` nightly builds change frequently and often break compatibility on macOS (e.g. `BlockBuilder._func_stack` AttributeError with LLVM 19). The setup script downloads pinned, tested wheels from `mlbenchmark.app` instead. These are the exact same upstream packages, just hosted separately to ensure stability.
 
 Get your token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
 
@@ -60,20 +62,20 @@ python3 cli.py info
 Step-by-step check of the MLC compilation pipeline. Useful to diagnose failures before running the full benchmark.
 
 ```bash
-python3 cli.py jit nano
-python3 cli.py jit entry
+python3 cli.py jit light
+python3 cli.py jit speed
 ```
 
-Tiers: `nano` `entry` `standard` `advanced` `extreme`
+Tiers: `light` `speed` `flash` `blaze` `ultra`
 
 ### `test <backend> <tier>` — full inference test
 
 Downloads the model if needed, runs a warm-up, then a single test prompt and reports tokens/s.
 
 ```bash
-python3 cli.py test mlx nano
-python3 cli.py test gguf nano
-python3 cli.py test mlc nano
+python3 cli.py test mlx light
+python3 cli.py test gguf light
+python3 cli.py test mlc light
 ```
 
 Backends: `mlx` `gguf` `mlc`
@@ -83,8 +85,8 @@ Backends: `mlx` `gguf` `mlc`
 Runs a single custom prompt against any backend and tier.
 
 ```bash
-python3 cli.py prompt "What is the capital of France?" --backend mlx --tier nano
-python3 cli.py prompt "Explain quantum entanglement." --backend gguf --tier standard --max-tokens 512
+python3 cli.py prompt "What is the capital of France?" --backend mlx --tier light
+python3 cli.py prompt "Explain quantum entanglement." --backend gguf --tier flash --max-tokens 512
 ```
 
 ---
@@ -98,13 +100,13 @@ Models are downloaded automatically on first use from Hugging Face into:
 ./models/                                            ← fallback for standalone use
 ```
 
-| Tier     | Model                    | ~Size (all backends) |
-|----------|--------------------------|----------------------|
-| Nano     | Llama 3.2 3B Instruct    | ~6 GB                |
-| Entry    | Phi-3.5 Mini Instruct    | ~7 GB                |
-| Standard | Gemma 2 9B Instruct      | ~17 GB               |
-| Advanced | Qwen 2.5 14B Instruct    | ~26 GB               |
-| Extreme  | Qwen 2.5 32B Instruct    | ~58 GB               |
+| Tier   | Model                    | ~Size (all backends) |
+|--------|--------------------------|----------------------|
+| Light  | Llama 3.2 1B Instruct    | ~1.5 GB              |
+| Speed  | Phi-3.5 Mini Instruct    | ~7 GB                |
+| Flash  | Gemma 2 9B Instruct      | ~17 GB               |
+| Blaze  | Qwen 2.5 14B Instruct    | ~26 GB               |
+| Ultra  | Qwen 2.5 32B Instruct    | ~58 GB               |
 
 Each tier has three variants: MLX, GGUF, and MLC. You can download only the backend you need.
 
@@ -140,4 +142,6 @@ release_model()
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE).
+
+You may use, modify, and redistribute this code under the terms of the Apache 2.0 license. **You may not sell this software or derivative works based on it as a commercial product.**

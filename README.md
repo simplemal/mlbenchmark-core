@@ -19,7 +19,7 @@ Runs local LLM inference on Apple Silicon across three backends — **MLX**, **G
 ## Setup
 
 ```bash
-git clone https://github.com/your-org/mlbenchmark-core
+git clone https://github.com/simplemal/mlbenchmark-core
 cd mlbenchmark-core
 chmod +x setup.sh && ./setup.sh
 ```
@@ -31,13 +31,34 @@ The script will:
 
 **Note on MLC wheels:** The official `mlc.ai/wheels` nightly builds change frequently and often break compatibility on macOS (e.g. `BlockBuilder._func_stack` AttributeError with LLVM 19). The setup script downloads pinned, tested wheels from `mlbenchmark.app` instead. These are the exact same upstream packages, just hosted separately to ensure stability.
 
-Get your token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
-
 Then activate the venv:
 
 ```bash
 source .venv/bin/activate
 ```
+
+### Hugging Face token
+
+A Hugging Face token is **required before running any benchmark**. Without it, model downloads will fail at runtime.
+
+1. Create a free account at [huggingface.co](https://huggingface.co)
+2. Go to [Settings → Access Tokens](https://huggingface.co/settings/tokens) and create a token with **read** access
+3. Some models (e.g. Llama) are gated — visit the model page on HF and accept the license first
+4. Save the token:
+
+```bash
+# Option A: the setup script asks for it automatically
+./setup.sh
+
+# Option B: login manually after setup
+source .venv/bin/activate
+huggingface-cli login
+
+# Option C: set it as environment variable
+export HF_TOKEN="hf_your_token_here"
+```
+
+The token is stored locally in `~/.cache/huggingface/` and never sent anywhere except to Hugging Face for model downloads.
 
 ---
 

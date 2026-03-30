@@ -142,7 +142,7 @@ app/
   model_runner_gguf.py   ← GGUF backend (llama-cpp-python)
   model_runner_mlc.py    ← MLC backend (mlc-llm)
   benchmark_runner.py    ← subprocess interface (JSON lines on stdout)
-  benchmark_analyzer.py  ← TPS scoring and averages
+  benchmark_analyzer.py  ← TPS scoring, weighted scores, CSV output
   globals_state.py       ← shared mutable state across threads
   utils.py               ← hardware detection, config helpers
   config.json            ← prompt suite and score weights
@@ -158,6 +158,15 @@ release_model()
 ```
 
 `benchmark_runner.py` is the subprocess entry point used by the ML Benchmark app. It communicates over stdout as JSON lines and accepts `cancel` on stdin.
+
+### Scoring
+
+Each benchmark run produces two kinds of scores:
+
+- **TPS (tokens per second)** — raw inference speed per backend per tier
+- **Weighted score** — `tps × params_b × (quant_bits / 16)`, which normalises across model sizes so that running a larger model slower is valued more than a tiny model fast
+
+Results are saved as CSV with `tier_results` (raw TPS) and `scores` (weighted) columns.
 
 ---
 

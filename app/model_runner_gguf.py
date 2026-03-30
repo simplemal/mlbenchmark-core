@@ -29,41 +29,15 @@ DEFAULT_N_GPU_LAYERS = 0  # fallback
 
 
 def compute_gpu_layers(model_path):
+    # Apple Silicon uses unified memory — CPU and GPU share the same pool.
+    # There is no separate VRAM to overflow, so offloading all layers to GPU
+    # is always correct and gives maximum performance.
     try:
         model_key = Path(model_path).parts[-2]
-        model_info = get_models().get(model_key)
-
-        if not model_info:
-            print(
-                f"[DEBUG] compute_gpu_layers: model key '{model_key}' not found in repository"
-            )
-            return DEFAULT_N_GPU_LAYERS
-
-        min_ram = float(model_info.get("min_ram", 0))
-        size_gb = float(model_info.get("size_gb", 0))
-
-        gpu_cores_raw = detect_gpu_cores()
-        gpu_cores = int(gpu_cores_raw) if gpu_cores_raw.isdigit() else 0
-        ram_available = get_available_ram_gb()
-        ram_ok = ram_available >= (min_ram * MIN_RAM_FACTOR)
-
-        print(f"[DEBUG] compute_gpu_layers: model={model_key}")
-        print(f"[DEBUG] GPU cores={gpu_cores}, RAM available={ram_available:.2f} GB")
-        print(f"[DEBUG] min_ram={min_ram}, size_gb={size_gb}, ram_ok={ram_ok}")
-
-        if gpu_cores < GPU_THRESHOLD_WEAK:
-            layers = LAYER_WEAK if ram_ok else LAYER_WEAK_LOW
-        elif gpu_cores < GPU_THRESHOLD_MEDIUM:
-            layers = LAYER_MEDIUM if ram_ok else LAYER_MEDIUM_LOW
-        else:
-            layers = LAYER_STRONG if ram_ok else LAYER_STRONG_LOW
-
-        print(f"[DEBUG] Selected n_gpu_layers={layers}")
-        return layers
-
-    except Exception as e:
-        print(f"[ERROR] compute_gpu_layers: fallback to {DEFAULT_N_GPU_LAYERS} ({e})")
-        return DEFAULT_N_GPU_LAYERS
+        print(f"[DEBUG] compute_gpu_layers: model={model_key}, n_gpu_layers=-1 (unified memory)")
+    except Exception:
+        pass
+    return -1
 
 
 def load_model_if_needed(model_path: str, n_ctx: int = 4096):

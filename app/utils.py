@@ -501,11 +501,15 @@ def get_folder_size(path):
 # Function: Detect apple chip — describes what this function does
 def detect_apple_chip():
     try:
-        return (
+        raw = (
             subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"])
             .decode()
             .strip()
         )
+        # Normalize: remove "Apple " prefix to match Swift's mac_chip format
+        if raw.startswith("Apple "):
+            raw = raw[6:]
+        return raw
     except:
         return platform.processor()
 

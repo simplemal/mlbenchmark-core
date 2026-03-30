@@ -8,7 +8,7 @@ import time
 
 from datetime import datetime
 from pathlib import Path
-from utils import get_score_weigth, get_prompt_categories, BENCHMARK_TIERS, get_results_dir, detect_apple_chip, detect_mac_model, detect_memory_gb, detect_gpu_cores, detect_ne_cores, detect_os_name, detect_os_version
+from utils import get_score_weigth, get_prompt_categories, BENCHMARK_TIERS, get_results_dir, detect_apple_chip, detect_mac_model, detect_memory_gb, detect_gpu_cores, detect_ne_cores, detect_os_name, detect_os_version, get_models_for_tier
 
 # Capacity points awarded per completed tier (cumulative)
 CAPACITY_WEIGHTS = {
@@ -199,6 +199,9 @@ class BenchmarkAnalyzer:
         from utils import get_version
         app_version = get_version()
 
+        # Compute weighted scores
+        scores = BenchmarkAnalyzer.compute_scores(tier_results)
+
         fieldnames = [
             "timestamp",
             "app_version",
@@ -214,6 +217,7 @@ class BenchmarkAnalyzer:
             "cpu_cores",
             "benchmark_duration",
             "tier_results",
+            "scores",
             "prompt_results",
             "benchmark_id",
         ]
@@ -233,6 +237,7 @@ class BenchmarkAnalyzer:
             "cpu_cores": _os.cpu_count() or 0,
             "benchmark_duration": benchmark_duration,
             "tier_results": json.dumps(tier_results),
+            "scores": json.dumps(scores),
             "prompt_results": json.dumps(prompt_results or {}),
             "benchmark_id": benchmark_id,
         }
@@ -243,6 +248,43 @@ class BenchmarkAnalyzer:
             writer.writerow(row)
 
         return file_path, benchmark_id
+
+    @staticmethod
+    def effective_weight(tier_name: str, backend: str) -> float:
+        """Compute effective weight: params_b × (quant_bits / 16).
+        Reads params_b and quant_bits from repository.json dynamically."""
+        models = get_models_for_tier(tier_name)
+        for model in models.values():
+            if model.get("format") == backend:
+                params_b = model.get("params_b", 1)
+                quant_bits = model.get("quant_bits", 16)
+                return params_b * (quant_bits / 16)
+        # Fallback: use any model in the tier for params_b
+        for model in models.values():
+            params_b = model.get("params_b", 1)
+            quant_bits = model.get("quant_bits", 16)
+            return params_b * (quant_bits / 16)
+        return 1.0
+
+    @staticmethod
+    def compute_scores(tier_results: dict) -> dict:
+        """Compute weighted scores from tier_results.
+
+        Returns: {tier_name: {"MLX": score, ..., "_avg": avg_score}, ...}
+        where score = tps × effective_weight, _avg = mean of backend scores
+        """
+        scores = {}
+        for tier_name, backends in tier_results.items():
+            tier_scores = {}
+            for backend, tps in backends.items():
+                ew = BenchmarkAnalyzer.effective_weight(tier_name, backend)
+                tier_scores[backend] = round(tps * ew, 2)
+            vals = [v for v in tier_scores.values() if v > 0]
+            if vals:
+                tier_scores["_avg"] = round(sum(vals) / len(vals), 2)
+            if tier_scores:
+                scores[tier_name] = tier_scores
+        return scores
 
     @staticmethod
     def compute_tier_results(run_data: dict) -> dict:

@@ -445,12 +445,15 @@ def cmd_run_backend(tier_name: str, backend: str):
     fmt = backend
     gs.current_tier = tier_name
 
-    # Pre-run RAM check
+    # Pre-run RAM check: usa size_gb del modello + 50% buffer,
+    # non min_ram_gb del tier (che è il minimo totale del computer, non la RAM libera necessaria).
     available_ram = get_available_ram_gb()
-    if available_ram < tier_def["min_ram_gb"]:
+    model_size_gb = float(model.get("size_gb", tier_def.get("min_ram_gb", 1)))
+    ram_needed = model_size_gb * 1.5
+    if available_ram < ram_needed:
         emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
               "tps": 0.0, "success": False,
-              "error": f"memory_insufficient: {available_ram:.1f} GB free, need {tier_def['min_ram_gb']} GB"})
+              "error": f"memory_insufficient: {available_ram:.1f} GB free, need {ram_needed:.1f} GB"})
         return
 
     # MLC JIT pre-check
@@ -576,11 +579,13 @@ def cmd_save(file_path=None):
             if bk_data.get("success") and bk_data.get("tps", 0) > 0:
                 prompt_results[t_name][bk] = bk_data.get("prompts", {})
 
+    scores = BenchmarkAnalyzer.compute_scores(tier_results)
     file_path, benchmark_id = BenchmarkAnalyzer.save_result(tier_results, prompt_results, duration)
     emit({
         "event": "complete",
         "file_path": str(file_path),
         "tier_results": tier_results,
+        "scores": scores,
         "prompt_results": prompt_results,
         "benchmark_id": benchmark_id,
         "duration_seconds": round(duration),

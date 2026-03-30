@@ -118,11 +118,11 @@
     ]
   },
   "TIERS": [
-    {"id": "Light",  "display": "Light",  "icon": "leaf.fill",  "min_ram_gb": 2,  "disk_gb": 2,  "model_size": "1B"},
-    {"id": "Speed", "display": "Speed", "icon": "hare.fill",  "min_ram_gb": 5,  "disk_gb": 7,  "model_size": "3.8B"},
-    {"id": "Flash",  "display": "Flash",  "icon": "bolt.fill",  "min_ram_gb": 12, "disk_gb": 16, "model_size": "9B"},
-    {"id": "Blaze",  "display": "Blaze",  "icon": "flame.fill", "min_ram_gb": 20, "disk_gb": 26, "model_size": "14B"},
-    {"id": "Ultra",  "display": "Ultra",  "icon": "scope",      "min_ram_gb": 38, "disk_gb": 71, "model_size": "32B"}
+    {"id": "Light",  "display": "Light",  "icon": "leaf.fill",  "min_ram_gb": 1,  "disk_gb": 1.5,  "model_size": "0.5B"},
+    {"id": "Speed", "display": "Speed", "icon": "hare.fill",  "min_ram_gb": 4,  "disk_gb": 6,    "model_size": "3B"},
+    {"id": "Flash",  "display": "Flash",  "icon": "bolt.fill",  "min_ram_gb": 8,  "disk_gb": 14,   "model_size": "7B"},
+    {"id": "Blaze",  "display": "Blaze",  "icon": "flame.fill", "min_ram_gb": 18, "disk_gb": 26,   "model_size": "14B"},
+    {"id": "Ultra",  "display": "Ultra",  "icon": "scope",      "min_ram_gb": 36, "disk_gb": 56,   "model_size": "32B"}
   ],
   "SCORE_WEIGHT": {
     "truncated": 1,

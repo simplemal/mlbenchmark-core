@@ -301,6 +301,25 @@ def get_models_dir():
     return base
 
 
+# Stable numeric IDs for each tier — independent of model name or tier display name.
+_TIER_ID = {"Light": 1, "Speed": 2, "Flash": 3, "Blaze": 4, "Ultra": 5}
+
+
+def key_to_folder(key: str) -> Path:
+    """Convert a repository key to a stable model folder path.
+
+    e.g. 'Light__Qwen2.5-0.5B-Instruct__MLX'  →  Path('Tier1/MLX')
+
+    The folder is independent of the model name: changing the model for a tier
+    only requires re-downloading, not hunting for stale directories.
+    """
+    parts = key.split("__")
+    tier_name = parts[0]
+    backend   = parts[2] if len(parts) >= 3 else ""
+    tier_id   = _TIER_ID.get(tier_name, tier_name)   # fallback: use name as-is
+    return Path(f"Tier{tier_id}") / backend
+
+
 def get_results_dir():
     if is_bundle_context():
         base = Path.home() / "Library/Application Support/MLBenchmark/results"
@@ -800,7 +819,7 @@ def export_csv():
 
 
 def is_model_ready(key: str):
-    path = get_models_dir() / key
+    path = get_models_dir() / key_to_folder(key)
     model_ready = False
     model_exists = path.exists() and any(path.iterdir())
     if model_exists:
@@ -817,7 +836,7 @@ def delete_model(key, progress_callback=None):
 
     gs.cancel_requested = False  # reset annullamento
 
-    path = get_models_dir() / key
+    path = get_models_dir() / key_to_folder(key)
     completed_flag = path / ".completed"
 
     print(f"[DEBUG] Eliminazione modello: {key}")

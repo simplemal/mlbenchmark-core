@@ -78,6 +78,7 @@ from utils import (
     get_models_for_tier,
     get_models,
     get_models_dir,
+    key_to_folder,
     get_free_disk_space_gb,
     get_folder_size,
     get_prompts,
@@ -262,7 +263,7 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
         return 0.0, False, {}
 
     ctx_max = min(model.get("ctx_max", 4096), 8192)
-    model_dir = get_models_dir() / key
+    model_dir = get_models_dir() / key_to_folder(key)
 
     # ── MLC JIT compatibility check ───────────────────────────────────────────
     if fmt == "MLC":
@@ -401,21 +402,53 @@ def _run_backend(tier_name: str, key: str, model: dict) -> tuple[float, bool, di
 # ── Run mode ──────────────────────────────────────────────────────────────────
 
 def _migrate_model_dirs():
-    """Rename legacy tier folders (Nano→Light, Entry→Speed, etc.) so existing
-    downloads are found under the new names. Runs once, harmless if already done."""
-    renames = {"Nano": "Light", "Entry": "Speed", "Standard": "Flash",
-               "Advanced": "Blaze", "Extreme": "Ultra"}
+    """Migrate model folders to the stable Tier{id}/Backend/ structure.
+
+    Also handles legacy rename Nano→Light, Entry→Speed, etc. from older releases.
+    Runs at every startup — harmless if already done.
+    Keep this function through a few releases for users upgrading from older builds.
+    """
+    import shutil as _shutil
+
     base = get_models_dir()
     if not base.exists():
         return
-    for old_prefix, new_prefix in renames.items():
-        for d in base.iterdir():
-            if d.is_dir() and d.name.startswith(old_prefix + "__"):
+
+    # Step 1: rename legacy tier prefixes (pre-v1 naming)
+    legacy_renames = {"Nano": "Light", "Entry": "Speed", "Standard": "Flash",
+                      "Advanced": "Blaze", "Extreme": "Ultra"}
+    for d in list(base.iterdir()):
+        if not d.is_dir():
+            continue
+        for old_prefix, new_prefix in legacy_renames.items():
+            if d.name.startswith(old_prefix + "__"):
                 new_name = new_prefix + "__" + d.name.split("__", 1)[1]
                 new_path = base / new_name
                 if not new_path.exists():
                     d.rename(new_path)
                     print(f"[MIGRATE] {d.name} → {new_name}")
+                break
+
+    # Step 2: migrate from Tier__Model__Backend/ to Tier{id}/Backend/ (v1→v2)
+    for d in list(base.iterdir()):
+        if not d.is_dir():
+            continue
+        parts = d.name.split("__")
+        if len(parts) != 3:
+            continue   # already new format or unrecognised
+        tier_name, _, backend = parts
+        tier_id = {"Light": 1, "Speed": 2, "Flash": 3, "Blaze": 4, "Ultra": 5}.get(tier_name)
+        if tier_id is None:
+            continue
+        new_dir = base / f"Tier{tier_id}" / backend
+        if new_dir.exists():
+            # New location already populated — remove the stale old folder
+            _shutil.rmtree(str(d), ignore_errors=True)
+            print(f"[MIGRATE] removed duplicate old folder: {d.name}")
+        else:
+            new_dir.parent.mkdir(parents=True, exist_ok=True)
+            d.rename(new_dir)
+            print(f"[MIGRATE] {d.name} → Tier{tier_id}/{backend}")
 
 
 def cmd_run_backend(tier_name: str, backend: str):
@@ -462,7 +495,7 @@ def cmd_run_backend(tier_name: str, backend: str):
         _jit_err = getattr(_mlc, "MLC_JIT_ERROR", None)
         if _jit_err:
             import shutil
-            _model_dir = get_models_dir() / key
+            _model_dir = get_models_dir() / key_to_folder(key)
             if _model_dir.exists():
                 shutil.rmtree(str(_model_dir), ignore_errors=True)
             emit({"event": "backend_done", "tier": tier_name, "backend": fmt,
@@ -517,7 +550,7 @@ def cmd_run_backend(tier_name: str, backend: str):
     if gs.cancel_requested:
         if gs.cancel_delete_downloads:
             import shutil
-            model_dir = get_models_dir() / key
+            model_dir = get_models_dir() / key_to_folder(key)
             if model_dir.exists():
                 try:
                     shutil.rmtree(model_dir)

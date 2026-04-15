@@ -14,10 +14,7 @@ import json
 
 from datetime import datetime
 
-import tkinter as tk
-import tkinter.font as tkFont
 
-from tkinter import messagebox, filedialog
 from pathlib import Path
 from subprocess import Popen, PIPE
 
@@ -114,19 +111,6 @@ def is_dark_mode():
 
 
 DARK = is_dark_mode()
-
-
-def monitor_theme(widget, callback, interval=1500):
-    """Call `callback()` if dark mode changed. Uses `widget.after()` every `interval` ms."""
-    global DARK
-    current = is_dark_mode()
-    if current != DARK:
-        DARK = current
-        callback()
-    widget.after(
-        interval,
-        lambda: monitor_theme(widget, callback, interval),
-    )
 
 
 def get_prompt_warm_up():
@@ -257,28 +241,6 @@ def get_color(key):
     global CONFIG
     UI = CONFIG.get("UI")
     return UI["colors"]["dark" if is_dark_mode() else "light"].get(key, "")
-
-
-def get_font_name():
-    global CONFIG
-    for name in CONFIG.get("UI", {}).get("font", []):
-        try:
-            tkFont.Font(family=name)
-            return name
-        except tk.TclError:
-            continue
-    return "TkDefaultFont"  # fallback di sicurezza
-
-
-def get_font(size=12, style="normal"):
-    family = get_font_name()
-    style = style.lower()
-
-    # Costruzione della tupla: ("FontName", size, "bold"), ecc.
-    if style in ("bold", "italic"):
-        return (family, size, style)
-    else:
-        return (family, size)
 
 
 def get_card_dimension(dimension: str):

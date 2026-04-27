@@ -107,8 +107,11 @@ def models_dir() -> Path:
 
 
 def model_path(tier: str, backend: str) -> Path:
+    """Resolve the on-disk folder for a (tier, backend) pair using the same
+    key→folder scheme used by download_model.py (Tier{N}/{BACKEND})."""
+    from utils import key_to_folder
     key = f"{TIER_KEYS[tier]}__{backend.upper()}"
-    return models_dir() / key
+    return models_dir() / key_to_folder(key)
 
 
 def hr(char="─", width=60):
@@ -273,15 +276,21 @@ def _ensure_model_downloaded(tier: str, backend: str) -> bool:
         fail(f"download_model unavailable: {e}")
         return False
 
-    def _progress(state):
-        if isinstance(state, dict):
-            mb = state.get("downloaded_mb")
-            fname = state.get("filename") or ""
-            if mb is not None:
-                line = f"     downloaded {mb:.1f} MB"
-                if fname:
-                    line += f"  ({fname})"
-                print(line, flush=True)
+    # download_model invokes the callback with (downloaded_bytes, total_bytes)
+    # roughly twice per second from a monitor thread. Throttle the printout.
+    last_logged = [0.0]
+
+    def _progress(downloaded_bytes: int, total_bytes: int):
+        mb_now = downloaded_bytes / (1024 * 1024)
+        # Print at most every ~50 MB so we don't spam stdout
+        if mb_now - last_logged[0] < 50 and downloaded_bytes < (total_bytes or 0):
+            return
+        last_logged[0] = mb_now
+        if total_bytes:
+            pct = 100.0 * downloaded_bytes / total_bytes
+            print(f"     {mb_now:7.1f} MB  ({pct:5.1f}%)", flush=True)
+        else:
+            print(f"     {mb_now:7.1f} MB", flush=True)
 
     try:
         result = do_download(key, progress_callback=_progress)

@@ -94,25 +94,6 @@ def get_scroll_speed():
     return 2.5
 
 
-def is_dark_mode():
-    """Return True if macOS is in dark mode using native AppKit API"""
-    if platform.system() != "Darwin":
-        return False
-    try:
-        from AppKit import NSApplication
-        from Foundation import NSUserDefaults
-
-        defaults = NSUserDefaults.standardUserDefaults()
-        style = defaults.stringForKey_("AppleInterfaceStyle")
-        return style == "Dark"
-    except Exception as e:
-        print(f"[DEBUG] Failed to get theme (NSUserDefaults): {e}")
-        return False
-
-
-DARK = is_dark_mode()
-
-
 def get_prompt_warm_up():
     global CONFIG
     PROMPT_WARM_UP = CONFIG.get("PROMPT_WARM_UP", "Hi, how are you?")
@@ -140,115 +121,9 @@ def get_score_weigth(prompt: str = None):
     return SCORE_WEIGHT
 
 
-def get_quant_map():
-    global CONFIG
-    QUANT_MAP = CONFIG.get("QUANT_MAP")
-    return QUANT_MAP
-
-
-def get_app_name():
-    global CONFIG
-    return CONFIG.get("APP_NAME", "app")
-
-
 def get_version():
     global CONFIG
     return CONFIG.get("VERSION", "0.0")
-
-
-def get_version_check_url():
-    global CONFIG
-    return CONFIG.get("VERSION_CHECK_URL", "")
-
-
-def check_for_update():
-    result = {
-        "success": False,
-        "error": None,
-        "local": {"version": None},
-        "remote": {},
-        "need_update": False,
-    }
-
-    try:
-        local_version = get_version()
-        result["local"]["version"] = local_version
-        local_tuple = tuple(map(int, local_version.split(".")))
-
-        url = get_version_check_url()
-        output = subprocess.check_output(["curl", "-s", url], stderr=subprocess.STDOUT)
-        data = output.decode("utf-8")
-
-        remote_data = json.loads(data)
-
-        if not remote_data.get("success") or "version" not in remote_data:
-            result["error"] = "Invalid response structure"
-            return result
-
-        result["remote"] = remote_data
-        remote_version = remote_data["version"]
-        remote_tuple = tuple(map(int, remote_version.split(".")))
-
-        if remote_tuple > local_tuple:
-            result["need_update"] = True
-
-        result["success"] = True
-
-    except subprocess.CalledProcessError as e:
-        result["error"] = f"Network error: {e.output.decode('utf-8').strip()}"
-    except json.JSONDecodeError:
-        result["error"] = "Failed to decode JSON"
-    except Exception as e:
-        result["error"] = f"Unexpected error: {str(e)}"
-
-    return result
-
-
-def is_update_available():
-    """Check if a new version is available without opening any window."""
-    result = check_for_update()
-    if not result.get("success", False):
-        return False
-    return result.get("need_update", False)
-
-
-def cleanup_incomplete_download(extra_file=None):
-    """Delete residual .downloading file and optional specific file if exists."""
-    try:
-        app_name = get_app_name()
-        temp_filename = f"{app_name}_latest.dmg.downloading"
-        temp_path = os.path.expanduser(f"~/Downloads/{temp_filename}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-    except Exception:
-        pass
-
-    if extra_file:
-        try:
-            extra_path = os.path.expanduser(f"~/Downloads/{extra_file}")
-            if os.path.exists(extra_path):
-                os.remove(extra_path)
-        except Exception:
-            pass
-
-
-def get_author():
-    global CONFIG
-    return CONFIG.get("AUTHOR", "SaggiaMente")
-
-
-def get_color(key):
-    global CONFIG
-    UI = CONFIG.get("UI")
-    return UI["colors"]["dark" if is_dark_mode() else "light"].get(key, "")
-
-
-def get_card_dimension(dimension: str):
-    global CONFIG
-    CARD_DIMENSION = CONFIG.get("UI").get("results_card")
-    if dimension:
-        CARD_DIMENSION = CARD_DIMENSION.get(dimension, 100)
-    return CARD_DIMENSION
 
 
 _APP_ROOT = Path(__file__).resolve().parent.parent

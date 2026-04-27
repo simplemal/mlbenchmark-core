@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 r"""
-ml-benchmark CLI — diagnostics and targeted tests for the inference backends.
+ml-benchmark CLI — interactive REPL on local LLM backends.
 
-Usage:
-    python3 cli.py info                            # hardware + available tiers
-    python3 cli.py download mlx light              # download model from Hugging Face
-    python3 cli.py test mlc light                  # full MLC test on Light
-    python3 cli.py test mlx flash                  # MLX test
-    python3 cli.py test gguf blaze                 # GGUF test
-    python3 cli.py jit light                       # MLC JIT diagnostics only
-    python3 cli.py prompt "hi" --backend mlx --tier light   # single prompt
+Default usage (interactive):
+    python3 cli.py --backend mlx --tier light
+    python3 cli.py --backend gguf --tier flash
+    python3 cli.py --backend mlc --tier light --max-tokens 1024
+
+This downloads the model if missing, loads it, warms it up, then drops you
+at a `> ` prompt. Type any prompt and press Enter; the response prints with
+its tokens-per-second. `:q` (or Ctrl-D) exits and releases the model.
+
+Diagnostic sub-commands:
+    python3 cli.py info                            # hardware + tiers + models
+    python3 cli.py download mlx light              # pre-download a model
+    python3 cli.py jit light                       # MLC JIT step-by-step diag
 
 Tiers are loaded dynamically from shared/repository.json
 (currently: light, speed, flash, blaze, ultra).
@@ -319,143 +324,135 @@ def cmd_download(args):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Command: test  (load model + warm-up + sample prompt)
+# Interactive REPL  (default mode: --backend X --tier Y)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def cmd_test(args):
+def _load_runner(backend: str, model_dir: Path):
+    """Load the right backend runner module, return (runner, repo_arg).
+    `repo_arg` is what gets passed to runner.run_prompt() — depends on backend."""
+    if backend == "mlx":
+        import model_runner_mlx as runner
+        return runner, str(model_dir)
+    if backend == "gguf":
+        import model_runner_gguf as runner
+        ggufs = list(model_dir.glob("*.gguf"))
+        if not ggufs:
+            raise RuntimeError(f"No .gguf file in {model_dir}")
+        return runner, str(ggufs[0])
+    if backend == "mlc":
+        with _suppress_native_io():
+            import model_runner_mlc as runner
+        # MLC may have flagged itself as incompatible at import time
+        if getattr(runner, "MLC_JIT_ERROR", None):
+            raise RuntimeError(
+                f"MLC backend not available: {runner.MLC_JIT_ERROR}\n"
+                f"     See https://mlbenchmark.app/docs/MLBW_W002"
+            )
+        return runner, str(model_dir.resolve())
+    raise RuntimeError(f"Unknown backend: {backend}")
+
+
+def cmd_chat(args):
+    """Interactive REPL: download → load → warm-up → loop → release."""
     tier    = args.tier.lower()
     backend = args.backend.lower()
-    section(f"Test {backend.upper()} — {tier}")
+    section(f"Interactive — {backend.upper()} / {tier}")
 
+    # 1. Ensure model on disk
     p = model_path(tier, backend)
     if not p.exists():
         info(f"Model not on disk → downloading {TIER_KEYS[tier]}__{backend.upper()}")
         if not _ensure_model_downloaded(tier, backend):
             return
-        # download_model writes to the canonical models dir; recompute the path
         p = model_path(tier, backend)
         if not p.exists():
             fail(f"Download finished but model still missing at {p}")
             return
+    ok(f"Model at {p}")
 
-    # Import the right runner
+    # 2. Load runner
     info(f"Loading {backend.upper()} runner…")
     try:
-        if backend == "mlx":
-            import model_runner_mlx as runner
-            repo = str(p)
-        elif backend == "gguf":
-            import model_runner_gguf as runner
-            gguf_files = list(p.glob("*.gguf"))
-            if not gguf_files:
-                fail(f"No .gguf file in {p}")
-                return
-            repo = str(gguf_files[0])
-        elif backend == "mlc":
-            with _suppress_native_io():
-                import model_runner_mlc as runner
-            repo = str(p.resolve())
-            # Check JIT compatibility before proceeding
-            if getattr(runner, "MLC_JIT_ERROR", None):
-                fail(f"MLC not compatible on this Mac")
-                info(f"  {runner.MLC_JIT_ERROR}")
-                warn("The MLC backend is skipped on this configuration.")
-                info("Details: https://mlbenchmark.app/docs/MLBW_W002")
-                return
-        else:
-            fail(f"Unknown backend: {backend}")
-            return
-        ok("Runner imported")
-    except Exception as e:
-        fail(f"Runner import failed: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        return
-
-    # Warm-up
-    WARM_UP = "Say hello in one word."
-    info(f"Warm-up (repo={repo})…")
-    t0 = time.time()
-    try:
-        out, reason, ntok = runner.run_prompt(WARM_UP, 16, repo, ctx_max=4096)
-        elapsed = time.time() - t0
-        ok(f"Warm-up OK in {elapsed:.1f}s  →  '{out[:80].strip()}'  ({reason}, {ntok} tok)")
-    except Exception as e:
-        elapsed = time.time() - t0
-        fail(f"Warm-up failed after {elapsed:.1f}s: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        return
-
-    # Sample prompt
-    TEST_PROMPT = "What is 2 + 2? Answer with just the number."
-    info(f"Prompt: '{TEST_PROMPT}'")
-    t0 = time.time()
-    try:
-        out, reason, ntok = runner.run_prompt(TEST_PROMPT, 64, repo, ctx_max=4096)
-        elapsed = time.time() - t0
-        tps = ntok / elapsed if elapsed > 0 else 0
-        ok(f"Output: '{out[:120].strip()}'")
-        ok(f"Speed: {tps:.1f} t/s  ({ntok} tok in {elapsed:.1f}s, finish={reason})")
-    except Exception as e:
-        elapsed = time.time() - t0
-        fail(f"Prompt failed after {elapsed:.1f}s: {type(e).__name__}: {e}")
-        traceback.print_exc()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Command: prompt  (free-form single prompt)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def cmd_prompt(args):
-    tier    = args.tier.lower()
-    backend = args.backend.lower()
-    text    = args.text
-    section(f"Single prompt — {backend.upper()} / {tier}")
-
-    p = model_path(tier, backend)
-    if not p.exists():
-        info(f"Model not on disk → downloading {TIER_KEYS[tier]}__{backend.upper()}")
-        if not _ensure_model_downloaded(tier, backend):
-            return
-        p = model_path(tier, backend)
-        if not p.exists():
-            fail(f"Download finished but model still missing at {p}")
-            return
-
-    try:
-        if backend == "mlx":
-            import model_runner_mlx as runner
-            repo = str(p)
-        elif backend == "gguf":
-            import model_runner_gguf as runner
-            gguf_files = list(p.glob("*.gguf"))
-            if not gguf_files:
-                fail("No .gguf file found")
-                return
-            repo = str(gguf_files[0])
-        elif backend == "mlc":
-            with _suppress_native_io():
-                import model_runner_mlc as runner
-            repo = str(p.resolve())
-        else:
-            fail(f"Unknown backend: {backend}")
-            return
-    except Exception as e:
-        fail(f"Import failed: {e}")
-        return
-
-    info(f"Prompt: {text}")
-    t0 = time.time()
-    try:
-        out, reason, ntok = runner.run_prompt(text, args.max_tokens, repo, ctx_max=4096)
-        elapsed = time.time() - t0
-        tps = ntok / elapsed if elapsed > 0 else 0
-        print()
-        print(out)
-        print()
-        ok(f"{tps:.1f} t/s  ({ntok} tok in {elapsed:.1f}s, finish={reason})")
+        runner, repo = _load_runner(backend, p)
     except Exception as e:
         fail(f"{type(e).__name__}: {e}")
         traceback.print_exc()
+        return
+    ok("Runner loaded")
+
+    # 3. Warm-up (also forces the model to load fully into memory)
+    info("Warming up…")
+    t0 = time.time()
+    try:
+        runner.run_prompt("Say hello in one word.", 16, repo, ctx_max=4096)
+    except Exception as e:
+        fail(f"Warm-up failed: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        _release_quietly(runner)
+        return
+    ok(f"Ready (warm-up in {time.time()-t0:.1f}s)")
+
+    # 4. REPL loop
+    print()
+    info("Type a prompt and press Enter. ':q' or Ctrl-D to exit.")
+    print()
+    try:
+        while True:
+            try:
+                line = input("> ")
+            except EOFError:
+                print()
+                break
+            except KeyboardInterrupt:
+                # Ctrl-C at the prompt: confirm exit
+                print()
+                break
+
+            line = line.strip()
+            if not line:
+                continue
+            if line in (":q", ":quit", ":exit"):
+                break
+            if line in (":h", ":help", ":?"):
+                print("  :q | :quit | :exit   — leave the REPL")
+                print("  Ctrl-D               — leave the REPL")
+                print("  Ctrl-C               — interrupt current generation")
+                continue
+
+            t0 = time.time()
+            try:
+                out, reason, ntok = runner.run_prompt(
+                    line, args.max_tokens, repo, ctx_max=4096
+                )
+            except KeyboardInterrupt:
+                print()
+                warn("Generation interrupted.")
+                continue
+            except Exception as e:
+                fail(f"{type(e).__name__}: {e}")
+                continue
+            elapsed = time.time() - t0
+            tps = ntok / elapsed if elapsed > 0 else 0
+            print()
+            print(out)
+            print()
+            ok(f"{tps:.1f} t/s  ({ntok} tok in {elapsed:.1f}s, finish={reason})")
+            print()
+    finally:
+        # 5. Release the model
+        _release_quietly(runner)
+
+
+def _release_quietly(runner):
+    """Best-effort model unload — runners expose release_model() per the
+    documented interface."""
+    info("Releasing model…")
+    try:
+        if hasattr(runner, "release_model"):
+            runner.release_model()
+        ok("Done.")
+    except Exception as e:
+        warn(f"release_model() raised {type(e).__name__}: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,17 +461,26 @@ def cmd_prompt(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ml-benchmark CLI — backend diagnostics and tests",
+        description="ml-benchmark CLI — interactive REPL on local LLM backends",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
+        epilog=__doc__,
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # Top-level flags drive the default (interactive) mode
+    parser.add_argument("--backend", choices=BACKENDS,
+                        help="backend for the interactive session")
+    parser.add_argument("--tier",    choices=TIERS,
+                        help="model tier for the interactive session")
+    parser.add_argument("--max-tokens", type=int, default=512, dest="max_tokens",
+                        help="cap on tokens per response (default 512)")
+
+    sub = parser.add_subparsers(dest="cmd")  # NOT required → no subcmd → REPL
 
     # info
     sub.add_parser("info", help="Hardware, packages, models on disk")
 
     # download
-    p_dl = sub.add_parser("download", help="Download model from Hugging Face")
+    p_dl = sub.add_parser("download", help="Download a model from Hugging Face")
     p_dl.add_argument("backend", choices=BACKENDS)
     p_dl.add_argument("tier", choices=TIERS)
 
@@ -482,28 +488,21 @@ def main():
     p_jit = sub.add_parser("jit", help="Step-by-step MLC JIT diagnostics")
     p_jit.add_argument("tier", choices=TIERS)
 
-    # test
-    p_test = sub.add_parser("test", help="Load model, warm-up, sample prompt")
-    p_test.add_argument("backend", choices=BACKENDS)
-    p_test.add_argument("tier", choices=TIERS)
-
-    # prompt
-    p_prompt = sub.add_parser("prompt", help="Free-form single prompt")
-    p_prompt.add_argument("text")
-    p_prompt.add_argument("--backend", choices=BACKENDS, required=True)
-    p_prompt.add_argument("--tier",    choices=TIERS,    required=True)
-    p_prompt.add_argument("--max-tokens", type=int, default=256, dest="max_tokens")
-
     args = parser.parse_args()
 
     dispatch = {
         "info":     cmd_info,
         "download": cmd_download,
         "jit":      cmd_jit,
-        "test":     cmd_test,
-        "prompt":   cmd_prompt,
     }
-    dispatch[args.cmd](args)
+
+    if args.cmd:
+        dispatch[args.cmd](args)
+    elif args.backend and args.tier:
+        cmd_chat(args)
+    else:
+        parser.print_help()
+        sys.exit(1)
     print()
 
 

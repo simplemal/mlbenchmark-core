@@ -64,11 +64,37 @@ The token is stored locally in `~/.cache/huggingface/` and never sent anywhere e
 
 ## CLI
 
-The `cli.py` tool lets you inspect the environment and run targeted tests without the app.
+`cli.py` is an interactive REPL on top of any backend × tier combination, plus a few diagnostic sub-commands.
 
+### Interactive mode (default)
+
+```bash
+python3 cli.py --backend mlx --tier light
+python3 cli.py --backend gguf --tier flash
+python3 cli.py --backend mlc --tier light --max-tokens 1024
 ```
-python3 cli.py <command> [args]
+
+What happens:
+
+1. The model is downloaded from Hugging Face if it's not already on disk
+2. The runner is loaded and warmed up
+3. You're dropped at a `> ` prompt
+4. Type a prompt and press Enter — the response prints with its tokens-per-second
+5. `:q` (or `Ctrl-D`) exits and releases the model from memory
+
+```text
+> What is the capital of France?
+
+The capital of France is Paris.
+
+  ✓  42.3 t/s  (8 tok in 0.2s, finish=stop)
+
+> :q
+     Releasing model…
+  ✓  Done.
 ```
+
+Backends: `mlx` `gguf` `mlc`. Tiers: `light` `speed` `flash` `blaze` `ultra`. The `--max-tokens` cap defaults to 512.
 
 ### `info` — system overview
 
@@ -78,6 +104,15 @@ Prints hardware info, installed packages, and which models are already on disk.
 python3 cli.py info
 ```
 
+### `download <backend> <tier>` — pre-download a model
+
+The interactive mode auto-downloads, but if you want to fetch a model up-front (e.g. on a fast network before going offline) use `download`:
+
+```bash
+python3 cli.py download mlx light
+python3 cli.py download gguf flash
+```
+
 ### `jit <tier>` — MLC JIT diagnostics
 
 Step-by-step check of the MLC compilation pipeline. Useful to diagnose failures before running the full benchmark.
@@ -85,29 +120,6 @@ Step-by-step check of the MLC compilation pipeline. Useful to diagnose failures 
 ```bash
 python3 cli.py jit light
 python3 cli.py jit speed
-```
-
-Tiers: `light` `speed` `flash` `blaze` `ultra`
-
-### `test <backend> <tier>` — full inference test
-
-Downloads the model if needed, runs a warm-up, then a single test prompt and reports tokens/s.
-
-```bash
-python3 cli.py test mlx light
-python3 cli.py test gguf light
-python3 cli.py test mlc light
-```
-
-Backends: `mlx` `gguf` `mlc`
-
-### `prompt <text>` — free prompt
-
-Runs a single custom prompt against any backend and tier.
-
-```bash
-python3 cli.py prompt "What is the capital of France?" --backend mlx --tier light
-python3 cli.py prompt "Explain quantum entanglement." --backend gguf --tier flash --max-tokens 512
 ```
 
 ---

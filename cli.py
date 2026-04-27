@@ -3,12 +3,15 @@ r"""
 ml-benchmark CLI — diagnosi e test mirati dei backend di inferenza.
 
 Uso:
-    python3 cli.py info                          # hardware + tier disponibili
-    python3 cli.py test mlc nano                 # test completo MLC su Nano
-    python3 cli.py test mlx nano                 # test MLX
-    python3 cli.py test gguf nano                # test GGUF
-    python3 cli.py jit nano                      # solo diagnostica JIT MLC (senza inference)
-    python3 cli.py prompt "ciao" --backend mlx --tier nano  # prompt singolo
+    python3 cli.py info                            # hardware + tier disponibili
+    python3 cli.py test mlc light                  # test completo MLC su Light
+    python3 cli.py test mlx flash                  # test MLX
+    python3 cli.py test gguf blaze                 # test GGUF
+    python3 cli.py jit light                       # solo diagnostica JIT MLC
+    python3 cli.py prompt "hi" --backend mlx --tier light   # prompt singolo
+
+I tier vengono letti dinamicamente da shared/repository.json
+(attualmente: light, speed, flash, blaze, ultra).
 
 Esegui sempre con il venv dell'app:
     ~/Library/Application\ Support/MLBenchmark/venv/bin/python3 cli.py ...
@@ -32,15 +35,31 @@ sys.path.insert(0, str(APP_DIR))
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-TIERS = ["nano", "entry", "standard", "advanced", "extreme"]
+def _load_tier_map() -> dict:
+    """Build {lower_tier_id: 'TierName__ModelName'} dynamically from
+    shared/repository.json. Preserva l'ordine di inserimento dei tier
+    (Light, Speed, Flash, Blaze, Ultra) per gli help di argparse."""
+    import json
+    repo_path = Path(__file__).resolve().parent / "shared" / "repository.json"
+    if not repo_path.exists():
+        return {}
+    try:
+        with open(repo_path, encoding="utf-8") as f:
+            repo = json.load(f)
+    except Exception:
+        return {}
+    out = {}
+    for key in repo:
+        parts = key.split("__")
+        if len(parts) >= 3:
+            tier_id = parts[0]                     # es. "Light"
+            prefix  = "__".join(parts[:2])         # es. "Light__Qwen2.5-0.5B-Instruct"
+            out.setdefault(tier_id.lower(), prefix)
+    return out
 
-TIER_KEYS = {
-    "nano":     "Nano__Llama-3.2-3B-Instruct",
-    "entry":    "Entry__Phi-3.5-Mini-Instruct",
-    "standard": "Standard__Gemma-2-9B-Instruct",
-    "advanced": "Advanced__Qwen2.5-14B-Instruct",
-    "extreme":  "Extreme__Qwen2.5-32B-Instruct",
-}
+
+TIER_KEYS = _load_tier_map()
+TIERS     = list(TIER_KEYS.keys())  # es. ["light", "speed", "flash", "blaze", "ultra"]
 
 BACKENDS = ["mlx", "gguf", "mlc"]
 

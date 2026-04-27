@@ -4,6 +4,7 @@ ml-benchmark CLI — diagnostics and targeted tests for the inference backends.
 
 Usage:
     python3 cli.py info                            # hardware + available tiers
+    python3 cli.py download mlx light              # download model from Hugging Face
     python3 cli.py test mlc light                  # full MLC test on Light
     python3 cli.py test mlx flash                  # MLX test
     python3 cli.py test gguf blaze                 # GGUF test
@@ -96,17 +97,13 @@ BACKENDS = ["mlx", "gguf", "mlc"]
 
 
 def models_dir() -> Path:
-    """Return the models directory — Application Support if bundled, otherwise local."""
+    """Return the models directory — Application Support if it exists, otherwise
+    the local fallback (created on demand by `cli.py download`).
+    Always returns a Path; never raises. Use `p.exists()` to check presence."""
     app_support = Path.home() / "Library" / "Application Support" / "MLBenchmark" / "models"
     if app_support.exists():
         return app_support
-    local = CLI_DIR / "models"
-    if local.exists():
-        return local
-    raise FileNotFoundError(
-        f"No models directory found.\n"
-        f"Searched in:\n  {app_support}\n  {local}"
-    )
+    return CLI_DIR / "models"
 
 
 def model_path(tier: str, backend: str) -> Path:
@@ -262,6 +259,57 @@ def cmd_jit(args):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helper: download a model on demand (used by both `download` and `test`/`prompt`)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ensure_model_downloaded(tier: str, backend: str) -> bool:
+    """Make sure the model for (tier, backend) is on disk.
+    Returns True on success, False on failure. Prints progress via print()."""
+    key = f"{TIER_KEYS[tier]}__{backend.upper()}"
+
+    try:
+        from download_model import download_model as do_download
+    except ImportError as e:
+        fail(f"download_model unavailable: {e}")
+        return False
+
+    def _progress(state):
+        if isinstance(state, dict):
+            mb = state.get("downloaded_mb")
+            fname = state.get("filename") or ""
+            if mb is not None:
+                line = f"     downloaded {mb:.1f} MB"
+                if fname:
+                    line += f"  ({fname})"
+                print(line, flush=True)
+
+    try:
+        result = do_download(key, progress_callback=_progress)
+    except Exception as e:
+        fail(f"{type(e).__name__}: {e}")
+        traceback.print_exc()
+        return False
+
+    if result.get("success"):
+        ok(result.get("message", "Download completed."))
+        return True
+    fail(result.get("message", "Download failed."))
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Command: download  (fetch model from Hugging Face explicitly)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cmd_download(args):
+    tier    = args.tier.lower()
+    backend = args.backend.lower()
+    section(f"Download {backend.upper()} — {tier}")
+    info(f"Model key: {TIER_KEYS[tier]}__{backend.upper()}")
+    _ensure_model_downloaded(tier, backend)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Command: test  (load model + warm-up + sample prompt)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -272,9 +320,14 @@ def cmd_test(args):
 
     p = model_path(tier, backend)
     if not p.exists():
-        fail(f"Model not found: {p}")
-        info("Download the model first by running the benchmark from the app.")
-        return
+        info(f"Model not on disk → downloading {TIER_KEYS[tier]}__{backend.upper()}")
+        if not _ensure_model_downloaded(tier, backend):
+            return
+        # download_model writes to the canonical models dir; recompute the path
+        p = model_path(tier, backend)
+        if not p.exists():
+            fail(f"Download finished but model still missing at {p}")
+            return
 
     # Import the right runner
     info(f"Loading {backend.upper()} runner…")
@@ -351,8 +404,13 @@ def cmd_prompt(args):
 
     p = model_path(tier, backend)
     if not p.exists():
-        fail(f"Model not found: {p}")
-        return
+        info(f"Model not on disk → downloading {TIER_KEYS[tier]}__{backend.upper()}")
+        if not _ensure_model_downloaded(tier, backend):
+            return
+        p = model_path(tier, backend)
+        if not p.exists():
+            fail(f"Download finished but model still missing at {p}")
+            return
 
     try:
         if backend == "mlx":
@@ -406,6 +464,11 @@ def main():
     # info
     sub.add_parser("info", help="Hardware, packages, models on disk")
 
+    # download
+    p_dl = sub.add_parser("download", help="Download model from Hugging Face")
+    p_dl.add_argument("backend", choices=BACKENDS)
+    p_dl.add_argument("tier", choices=TIERS)
+
     # jit
     p_jit = sub.add_parser("jit", help="Step-by-step MLC JIT diagnostics")
     p_jit.add_argument("tier", choices=TIERS)
@@ -424,7 +487,13 @@ def main():
 
     args = parser.parse_args()
 
-    dispatch = {"info": cmd_info, "jit": cmd_jit, "test": cmd_test, "prompt": cmd_prompt}
+    dispatch = {
+        "info":     cmd_info,
+        "download": cmd_download,
+        "jit":      cmd_jit,
+        "test":     cmd_test,
+        "prompt":   cmd_prompt,
+    }
     dispatch[args.cmd](args)
     print()
 

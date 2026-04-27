@@ -1,4 +1,116 @@
 {
+  "VERSION": "0.2.18",
+  "QUANT_MAP": {
+    "2": [
+      "Q2_K",
+      "Q2"
+    ],
+    "3": [
+      "Q3_K_M",
+      "Q3_K_L",
+      "Q3_K_S",
+      "Q3_K",
+      "Q3"
+    ],
+    "4": [
+      "Q4_K_M",
+      "Q4_K_S",
+      "Q4_K_L",
+      "Q4_K",
+      "Q4_0",
+      "Q4_1",
+      "Q4"
+    ],
+    "5": [
+      "Q5_K_M",
+      "Q5_K_S",
+      "Q5_K_L",
+      "Q5_K",
+      "Q5_0",
+      "Q5_1",
+      "Q5"
+    ],
+    "6": [
+      "Q6_K",
+      "Q6"
+    ],
+    "8": [
+      "Q8_0",
+      "Q8_1",
+      "Q8"
+    ],
+    "16": [
+      "F16",
+      "FP16",
+      "f16",
+      "fp16"
+    ],
+    "32": [
+      "F32",
+      "FP32",
+      "f32",
+      "fp32"
+    ],
+    "NF4": [
+      "NF4"
+    ],
+    "INT4": [
+      "INT4"
+    ],
+    "INT8": [
+      "INT8"
+    ],
+    "GPTQ": [
+      "GPTQ"
+    ]
+  },
+  "PROMPT_WARM_UP": "Tell me a joke",
+  "PROMPT": {
+    "basic": {
+      "mathematical_reasoning": "What is the formula for the area of a triangle and how is it used?",
+      "conceptual_explanation": "Explain entropy in max 3 short paragraphs.",
+      "code_generation": "Write a Python function that checks if a number is prime.",
+      "creative_writing": "Write a very short story of maximum 35 words with a twist ending.",
+      "historical_knowledge": "Who was Julius Caesar and why is he important?",
+      "ethical_reasoning": "Summarize the ethical pros and cons of using AI to monitor workers.",
+      "text_translation": "Translate “I love reading books” into Italian, German, and Spanish.",
+      "text_analysis": "Summarize the main theme of Homer’s Odyssey in 2 sentences.",
+      "uncertainty_reasoning": "A coin is flipped 3 times. What is the chance of getting exactly 2 heads?",
+      "interdisciplinary": "List 3 ways air pollution affects human health."
+    },
+    "advanced": {
+      "mathematical_reasoning": "Give a short geometric and algebraic proof of the Pythagorean Theorem.",
+      "conceptual_explanation": "Explain Special Relativity briefly using only analogies.",
+      "code_generation": "Write a FileIndexer class in Python with search and JSON export.",
+      "creative_writing": "Write a 180-word story in a dystopian future ruled by AI. No dialogue.",
+      "historical_knowledge": "In 200 words, summarize the Roman Empire’s peak and give 3 examples of its superiority.",
+      "ethical_reasoning": "Analyze the ethics of a risky drug from 3 views. Be concise.",
+      "text_translation": "Translate this into Italian, German, and Spanish: It was fortunate to meet you at the party yesterday. I’d like to invite you for coffee next week. How about Tuesday?",
+      "text_analysis": "Analyze this excerpt from Dante's Inferno: 'Nel mezzo del cammin di nostra vita mi ritrovai per una selva oscura, ché la diritta via era smarrita.' Focus on style, theme, and meaning.",
+      "uncertainty_reasoning": "A company may launch a product. Analyze risks and decisions based on probabilities: 60% chance of €5M gain, 30% €1M gain, 10% €2M loss. Consider also possible new competitors.",
+      "interdisciplinary": "Give a short analysis of antibiotic resistance from 5 views."
+    }
+  },
+  "PROMPT_CATEGORIES": {
+    "computation": [
+      "mathematical_reasoning",
+      "code_generation",
+      "uncertainty_reasoning"
+    ],
+    "reasoning": [
+      "ethical_reasoning",
+      "conceptual_explanation",
+      "interdisciplinary"
+    ],
+    "knowledge": [
+      "historical_knowledge",
+      "text_analysis"
+    ],
+    "language": [
+      "creative_writing",
+      "text_translation"
+    ]
+  },
   "TIERS": [
     {
       "id": "Light",
@@ -40,5 +152,9 @@
       "disk_gb": 56,
       "model_size": "32B"
     }
-  ]
+  ],
+  "SCORE_WEIGHT": {
+    "truncated": 1,
+    "truncated_and_degenerate": 0.5
+  }
 }

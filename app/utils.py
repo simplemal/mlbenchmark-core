@@ -14,6 +14,11 @@ import json
 
 from datetime import datetime
 
+# NOTE: tkinter/AppKit GUI helpers (monitor_theme, get_font_name, get_font,
+# get_color, get_card_dimension) and message-box dialogs were removed when
+# the Tkinter front-end was retired in favour of the SwiftUI app. Bundling
+# `import tkinter` at module level was crashing benchmark_runner.py on Macs
+# with a Python build that ships without _tkinter (e.g. Homebrew Python).
 
 from pathlib import Path
 from subprocess import Popen, PIPE
@@ -94,6 +99,9 @@ def get_scroll_speed():
     return 2.5
 
 
+# monitor_theme() removed — required widget.after() from Tkinter.
+
+
 def get_prompt_warm_up():
     global CONFIG
     PROMPT_WARM_UP = CONFIG.get("PROMPT_WARM_UP", "Hi, how are you?")
@@ -130,6 +138,9 @@ def get_quant_map():
 def get_version():
     global CONFIG
     return CONFIG.get("VERSION", "0.0")
+
+
+# get_font_name() and get_font() removed — used tkFont.Font / tk.TclError.
 
 
 _APP_ROOT = Path(__file__).resolve().parent.parent

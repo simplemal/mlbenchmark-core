@@ -653,23 +653,8 @@ def run_memory_purge():
         raise e
 
 
-# Function: Open csv — describes what this function does
-def open_csv():
-    path = get_home_dir() / "benchmark_results.csv"
-    if path.exists():
-        os.system(f"open '{path}'")
-    else:
-        messagebox.showwarning("Missing CSV", "You must run at least one benchmark.")
-
-
-# Function: Export csv — describes what this function does
-def export_csv():
-    path = get_home_dir() / "benchmark_results.csv"
-    if path.exists():
-        dest = filedialog.asksaveasfilename(defaultextension=".csv")
-        if dest:
-            shutil.copy(path, dest)
-            messagebox.showinfo("Exported", f"Exported in\n{dest}")
+# open_csv() and export_csv() removed — used tkinter messagebox/filedialog,
+# called only from the retired Tkinter GUI buttons.
 
 
 def is_model_ready(key: str):
